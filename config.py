@@ -12,6 +12,7 @@ from datetime import date
 # ------------------------------------------------------------
 # AUTOMATION SERVER
 # ------------------------------------------------------------
+
 # Indsæt det konkrete numeriske id på SEND EASY-køen her.
 # Værdien skal være et positivt heltal.
 QUEUE_ID: int = 16
@@ -30,9 +31,13 @@ QUEUE_LOOKBACK_START: str = "2025-01-01T00:00:00Z"
 # ------------------------------------------------------------
 # INSUBIZ OG BROWSER
 # ------------------------------------------------------------
+
 # True skjuler browseren ved normal kørsel.
 # Ved --debug tilsidesætter get_headless() værdien til False.
 HEADLESS: bool = True
+
+# Queue-mode kører på ATS uden X-server og skal derfor være headless.
+QUEUE_HEADLESS: bool = True
 
 CUSTOMER_ID: int | None = None
 CUSTOMER_SEGMENTATION_1: int = -1
@@ -51,6 +56,7 @@ SHOW_TREE_DATA: bool = False
 # ------------------------------------------------------------
 # SKADELISTENS KOLONNER
 # ------------------------------------------------------------
+
 SKADER_LISTE_COLUMNS: list[str] = [
     "Id",
     "IncidentNumberInternal",
@@ -65,6 +71,7 @@ SKADER_LISTE_COLUMNS: list[str] = [
 # ------------------------------------------------------------
 # FILTRE
 # ------------------------------------------------------------
+
 # Indsæt samme minimumsskadenummer som i den eksisterende proces.
 # Hvis alle positive skadenumre skal accepteres, behold værdien 0.
 MINIMUM_SKADENUMMER: int = 0
@@ -77,6 +84,7 @@ FORVENTET_SKATYPE: str = "Arbejdsskade"
 # ------------------------------------------------------------
 # MULIGE FELTNAVNE FRA INSUBIZ-EKSPORTEN
 # ------------------------------------------------------------
+
 SKADE_ID_FELTER: tuple[str, ...] = (
     "Id",
     "id",
@@ -120,6 +128,7 @@ STANDARD_CASE_FELTER: tuple[str, ...] = (
 # ------------------------------------------------------------
 # WORK ITEM BOX-FELTER
 # ------------------------------------------------------------
+
 BOX_SKADE_ID: str = "skade_id"
 BOX_SKADE_NR: str = "skade_nr"
 BOX_UNDERTYPE: str = "undertype"
@@ -131,6 +140,8 @@ BOX_STANDARD_CASE: str = "standard_case"
 # ------------------------------------------------------------
 # HJÆLPEFUNKTIONER
 # ------------------------------------------------------------
+
+
 def get_headless(debug: bool = False) -> bool:
     """Returnerer browserens headless-indstilling.
 
@@ -152,6 +163,7 @@ def get_headless(debug: bool = False) -> bool:
 # ------------------------------------------------------------
 # EKSPORTEREDE NAVNE
 # ------------------------------------------------------------
+
 __all__ = [
     "AFSLUTTET_STATUS",
     "BOX_SKADE_ID",
@@ -176,6 +188,7 @@ __all__ = [
     "QUEUE_CHECK_IN_PROGRESS",
     "QUEUE_CHECK_NEW",
     "QUEUE_CHECK_PENDING_USER_ACTION",
+    "QUEUE_HEADLESS",
     "QUEUE_ID",
     "QUEUE_LOOKBACK_START",
     "SHOW_TREE_DATA",
