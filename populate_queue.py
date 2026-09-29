@@ -20,6 +20,19 @@ from datetime import datetime, timezone
 from typing import Any
 
 from automation_server_client import Workqueue
+from q_haderslev_vbo.automation_server.ats_is_item_in_queue import (
+    is_item_in_queue,
+)
+from q_haderslev_vbo.automation_server.ats_update_item_data import (
+    update_item_data,
+)
+from q_insubiz.api_client import create_api_client
+from q_insubiz.functionality.skader import (
+    SKADER_LISTE,
+    hent_skade_via_id,
+)
+from q_insubiz.utils import normalize_positive_id
+
 from config import (
     AFSLUTTET_STATUS,
     BOX_SKADE_ID,
@@ -56,18 +69,6 @@ from config import (
     STATUS_ID,
     UNDERTYPE_FELTER,
 )
-from q_haderslev_vbo.automation_server.ats_is_item_in_queue import (
-    is_item_in_queue,
-)
-from q_haderslev_vbo.automation_server.ats_update_item_data import (
-    update_item_data,
-)
-from q_insubiz.api_client import create_api_client
-from q_insubiz.functionality.skader import (
-    SKADER_LISTE,
-    hent_skade_via_id,
-)
-from q_insubiz.utils import normalize_positive_id
 
 logger = logging.getLogger(__name__)
 
@@ -134,15 +135,8 @@ async def populate_queue(
                     skade=skade,
                     row_number=row_number,
                 )
-            except RuntimeError as error:
+            except (RuntimeError, TypeError, ValueError):
                 antal_ugyldige += 1
-
-                logger.warning(
-                    "Springer ugyldig skaderække over. Række: %s. Fejl: %s",
-                    row_number,
-                    error,
-                )
-
                 continue
 
             if not _skal_tilfoejes_fra_liste(

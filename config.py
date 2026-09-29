@@ -96,6 +96,9 @@ SKADE_NR_FELTER: tuple[str, ...] = (
     "IncidentNumberInternal",
     "incidentNumberInternal",
     "Skade nr",
+    "Skade nr.",
+    "Skadenr",
+    "Skadenr.",
     "Skadenummer",
 )
 
