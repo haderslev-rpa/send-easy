@@ -32,7 +32,7 @@ QUEUE_LOOKBACK_START: str = "2025-01-01T00:00:00Z"
 # ------------------------------------------------------------
 # True skjuler browseren ved normal kørsel.
 # Ved --debug tilsidesætter get_headless() værdien til False.
-HEADLESS: bool = False
+HEADLESS: bool = True
 
 CUSTOMER_ID: int | None = None
 CUSTOMER_SEGMENTATION_1: int = -1
