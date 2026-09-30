@@ -76,10 +76,13 @@ SKADER_LISTE_COLUMNS: list[str] = [
 # Hvis alle positive skadenumre skal accepteres, behold værdien 0.
 MINIMUM_SKADENUMMER: int = 0
 
-AFSLUTTET_STATUS: str = "Afsluttet"
+EKSKLUDEREDE_STATUSSER: tuple[str, ...] = (
+    "Afsluttet",
+    "Genoptaget",
+)
+
 FORVENTET_UNDERTYPE: str = "Arbejdsulykke"
 FORVENTET_SKATYPE: str = "Arbejdsskade"
-
 
 # ------------------------------------------------------------
 # MULIGE FELTNAVNE FRA INSUBIZ-EKSPORTEN
@@ -168,7 +171,7 @@ def get_headless(debug: bool = False) -> bool:
 # ------------------------------------------------------------
 
 __all__ = [
-    "AFSLUTTET_STATUS",
+    "EKSKLUDEREDE_STATUSSER",
     "BOX_SKADE_ID",
     "BOX_SKADE_NR",
     "BOX_SKATYPE",
