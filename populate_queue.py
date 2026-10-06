@@ -12,7 +12,7 @@ En skade tilføjes kun, når alle betingelser er opfyldt:
 - Skade-id findes ikke allerede i den konfigurerede ATS-kø.
 
 Work item-reference er skadens tekniske skade-id.
-Alle konfigurerbare inputs importeres fra config.py.
+Alle konfigurerbare inputs importeres fra configuration.py.
 """
 
 import logging
@@ -22,7 +22,7 @@ from typing import Any
 
 from automation_server_client import Workqueue
 
-from config import (
+from configuration import (
     BOX_SKADE_ID,
     BOX_SKADE_NR,
     BOX_SKATYPE,
@@ -45,7 +45,6 @@ from config import (
     QUEUE_CHECK_IN_PROGRESS,
     QUEUE_CHECK_NEW,
     QUEUE_CHECK_PENDING_USER_ACTION,
-    QUEUE_HEADLESS,
     QUEUE_ID,
     QUEUE_LOOKBACK_START,
     SHOW_TREE_DATA,
@@ -64,7 +63,7 @@ from q_haderslev_vbo.automation_server.ats_is_item_in_queue import (
 from q_haderslev_vbo.automation_server.ats_update_item_data import (
     update_item_data,
 )
-from q_insubiz.api_client import create_api_client
+from q_insubiz.api.client import InsubizApiClient
 from q_insubiz.functionality.skader import (
     SKADER_LISTE,
     hent_skade_via_id,
@@ -81,13 +80,25 @@ logger = logging.getLogger(__name__)
 
 
 async def populate_queue(
+    *,
     workqueue: Workqueue,
+    api_client: InsubizApiClient,
     debug: bool = False,
 ) -> None:
-    """Henter, filtrerer og tilføjer SEND EASY-items til køen."""
+    """Henter, filtrerer og tilføjer SEND EASY-items til køen.
+
+    main.py ejer browser, login og API-klient.
+    Funktionen bruger den delte klient og lukker den ikke.
+    Output: None. Godkendte skader tilføjes til workqueue.
+    """
     if workqueue is None:
         raise ValueError(
             "workqueue må ikke være None."
+        )
+
+    if api_client is None:
+        raise ValueError(
+            "Insubiz API-klienten mangler."
         )
 
     if not isinstance(debug, bool):
@@ -96,245 +107,224 @@ async def populate_queue(
         )
 
     queue_id = _hent_queue_id()
-    queue_headless = _hent_queue_headless()
-
     _valider_ekskluderede_statusser()
 
     logger.info(
-        "Opretter Insubiz API-klient til queue-mode. "
-        "Queue-id: %s. Headless: %s. Debug: %s. "
+        "SEND EASY queue-mode startet med delt API-klient. "
+        "Queue-id: %s. Debug: %s. "
         "Ekskluderede statusser: %s.",
         queue_id,
-        queue_headless,
         debug,
         EKSKLUDEREDE_STATUSSER,
     )
 
-    api_client = create_api_client(
-        headless=queue_headless,
-        debug=debug,
-        recorder=None,
+    skader = await _hent_skadeliste(
+        api_client=api_client,
     )
 
-    logger.info(
-        "SEND EASY queue-mode startet. "
-        "Queue-id: %s. Headless: %s. Debug: %s.",
-        queue_id,
-        queue_headless,
-        debug,
-    )
+    antal_tilfoejet = 0
+    antal_dubletter = 0
+    antal_filtreret = 0
+    antal_ekskluderet_status = 0
+    antal_ikke_standard_case = 0
+    antal_ugyldige = 0
 
-    try:
-        skader = await _hent_skadeliste(
-            api_client=api_client,
-        )
+    queue_lookup_end = _utc_timestamp()
 
-        antal_tilfoejet = 0
-        antal_dubletter = 0
-        antal_filtreret = 0
-        antal_ekskluderet_status = 0
-        antal_ikke_standard_case = 0
-        antal_ugyldige = 0
+    for row_number, skade in enumerate(
+        skader,
+        start=1,
+    ):
+        try:
+            felter = _hent_skadefelter(
+                skade=skade,
+                row_number=row_number,
+            )
+        except (
+            RuntimeError,
+            TypeError,
+            ValueError,
+        ) as error:
+            antal_ugyldige += 1
 
-        queue_lookup_end = _utc_timestamp()
+            logger.warning(
+                "Skaderækken kunne ikke valideres. "
+                "Række: %s. Fejl: %s",
+                row_number,
+                error,
+            )
+            continue
 
-        for row_number, skade in enumerate(
-            skader,
-            start=1,
+        status = felter["status"]
+
+        if _er_ekskluderet_status(
+            status=status,
         ):
-            try:
-                felter = _hent_skadefelter(
-                    skade=skade,
-                    row_number=row_number,
-                )
-            except (
-                RuntimeError,
-                TypeError,
-                ValueError,
-            ) as error:
-                antal_ugyldige += 1
-
-                logger.warning(
-                    "Skaderækken kunne ikke valideres. "
-                    "Række: %s. Fejl: %s",
-                    row_number,
-                    error,
-                )
-                continue
-
-            status = felter["status"]
-
-            if _er_ekskluderet_status(
-                status=status,
-            ):
-                antal_ekskluderet_status += 1
-
-                logger.info(
-                    "Skaden tilføjes ikke, fordi status "
-                    "er ekskluderet. "
-                    "Række: %s. Skade-id: %s. "
-                    "Skadenummer: %s. Status: %r.",
-                    row_number,
-                    felter["skade_id"],
-                    felter["skade_nr"],
-                    status,
-                )
-                continue
-
-            if not _skal_tilfoejes_fra_liste(
-                skade_nr=felter["skade_nr"],
-                status=status,
-                undertype=felter["undertype"],
-                skadetype=felter["skadetype"],
-            ):
-                antal_filtreret += 1
-
-                logger.info(
-                    "Skaden opfylder ikke SEND EASY-listens "
-                    "øvrige filtre. "
-                    "Række: %s. Skade-id: %s. "
-                    "Skadenummer: %s. Undertype: %r. "
-                    "Skadetype: %r. Status: %r.",
-                    row_number,
-                    felter["skade_id"],
-                    felter["skade_nr"],
-                    felter["undertype"],
-                    felter["skadetype"],
-                    status,
-                )
-                continue
-
-            skade_id = felter["skade_id"]
-            item_reference = str(skade_id)
-
-            if _findes_i_koe(
-                queue_id=queue_id,
-                item_reference=item_reference,
-                queue_lookup_end=queue_lookup_end,
-            ):
-                antal_dubletter += 1
-
-                logger.info(
-                    "Springer eksisterende SEND EASY-item over. "
-                    "Skade-id: %s. Skadenummer: %s.",
-                    skade_id,
-                    felter["skade_nr"],
-                )
-                continue
-
-            try:
-                skade_detaljer = await hent_skade_via_id(
-                    api_client=api_client,
-                    skade_id=skade_id,
-                )
-
-                standard_case = _hent_standard_case(
-                    skade=skade_detaljer,
-                )
-
-                detaljeret_status = (
-                    _hent_valgfri_status_fra_detaljer(
-                        skade=skade_detaljer,
-                    )
-                )
-
-            except Exception as error:
-                antal_ugyldige += 1
-
-                logger.warning(
-                    "Skadens detaildata kunne ikke valideres. "
-                    "Skade-id: %s. Fejl: %s",
-                    skade_id,
-                    error,
-                )
-                continue
-
-            if (
-                detaljeret_status
-                and _er_ekskluderet_status(
-                    status=detaljeret_status,
-                )
-            ):
-                antal_ekskluderet_status += 1
-
-                logger.info(
-                    "Skaden tilføjes ikke, fordi status i "
-                    "detailopslaget er ekskluderet. "
-                    "Skade-id: %s. Skadenummer: %s. "
-                    "Listestatus: %r. Detailstatus: %r.",
-                    skade_id,
-                    felter["skade_nr"],
-                    status,
-                    detaljeret_status,
-                )
-                continue
-
-            if standard_case is not True:
-                antal_ikke_standard_case += 1
-
-                logger.info(
-                    "Skaden tilføjes ikke, fordi standardCase "
-                    "ikke er True. "
-                    "Skade-id: %s. Skadenummer: %s. "
-                    "standardCase: %r.",
-                    skade_id,
-                    felter["skade_nr"],
-                    standard_case,
-                )
-                continue
-
-            data_json = _opret_work_item_data(
-                skade_id=skade_id,
-                skade_nr=felter["skade_nr"],
-                undertype=felter["undertype"],
-                skadetype=felter["skadetype"],
-                status=(
-                    detaljeret_status
-                    or status
-                ),
-                standard_case=standard_case,
-            )
-
-            workqueue.add_item(
-                data=data_json,
-                reference=item_reference,
-            )
-
-            antal_tilfoejet += 1
+            antal_ekskluderet_status += 1
 
             logger.info(
-                "SEND EASY-item tilføjet. "
-                "Skade-id: %s. Skadenummer: %s. "
-                "Reference: %s. Status: %s.",
+                "Skaden tilføjes ikke, fordi status "
+                "er ekskluderet. "
+                "Række: %s. Skade-id: %s. "
+                "Skadenummer: %s. Status: %r.",
+                row_number,
+                felter["skade_id"],
+                felter["skade_nr"],
+                status,
+            )
+            continue
+
+        if not _skal_tilfoejes_fra_liste(
+            skade_nr=felter["skade_nr"],
+            status=status,
+            undertype=felter["undertype"],
+            skadetype=felter["skadetype"],
+        ):
+            antal_filtreret += 1
+
+            logger.info(
+                "Skaden opfylder ikke SEND EASY-listens "
+                "øvrige filtre. "
+                "Række: %s. Skade-id: %s. "
+                "Skadenummer: %s. Undertype: %r. "
+                "Skadetype: %r. Status: %r.",
+                row_number,
+                felter["skade_id"],
+                felter["skade_nr"],
+                felter["undertype"],
+                felter["skadetype"],
+                status,
+            )
+            continue
+
+        skade_id = felter["skade_id"]
+        item_reference = str(skade_id)
+
+        if _findes_i_koe(
+            queue_id=queue_id,
+            item_reference=item_reference,
+            queue_lookup_end=queue_lookup_end,
+        ):
+            antal_dubletter += 1
+
+            logger.info(
+                "Springer eksisterende SEND EASY-item over. "
+                "Skade-id: %s. Skadenummer: %s.",
                 skade_id,
                 felter["skade_nr"],
-                item_reference,
-                detaljeret_status or status,
+            )
+            continue
+
+        try:
+            skade_detaljer = await hent_skade_via_id(
+                api_client=api_client,
+                skade_id=skade_id,
             )
 
-            print(
-                "Tilføjet til SEND EASY-kø: "
-                f"Skade-id {skade_id!r}, "
-                f"skadenummer {felter['skade_nr']!r}, "
-                f"status {(detaljeret_status or status)!r}."
+            standard_case = _hent_standard_case(
+                skade=skade_detaljer,
             )
 
-        _udskriv_opsummering(
-            antal_hentet=len(skader),
-            antal_tilfoejet=antal_tilfoejet,
-            antal_dubletter=antal_dubletter,
-            antal_filtreret=antal_filtreret,
-            antal_ekskluderet_status=(
-                antal_ekskluderet_status
+            detaljeret_status = (
+                _hent_valgfri_status_fra_detaljer(
+                    skade=skade_detaljer,
+                )
+            )
+
+        except Exception as error:
+            antal_ugyldige += 1
+
+            logger.warning(
+                "Skadens detaildata kunne ikke valideres. "
+                "Skade-id: %s. Fejl: %s",
+                skade_id,
+                error,
+            )
+            continue
+
+        if (
+            detaljeret_status
+            and _er_ekskluderet_status(
+                status=detaljeret_status,
+            )
+        ):
+            antal_ekskluderet_status += 1
+
+            logger.info(
+                "Skaden tilføjes ikke, fordi status i "
+                "detailopslaget er ekskluderet. "
+                "Skade-id: %s. Skadenummer: %s. "
+                "Listestatus: %r. Detailstatus: %r.",
+                skade_id,
+                felter["skade_nr"],
+                status,
+                detaljeret_status,
+            )
+            continue
+
+        if standard_case is not True:
+            antal_ikke_standard_case += 1
+
+            logger.info(
+                "Skaden tilføjes ikke, fordi standardCase "
+                "ikke er True. "
+                "Skade-id: %s. Skadenummer: %s. "
+                "standardCase: %r.",
+                skade_id,
+                felter["skade_nr"],
+                standard_case,
+            )
+            continue
+
+        data_json = _opret_work_item_data(
+            skade_id=skade_id,
+            skade_nr=felter["skade_nr"],
+            undertype=felter["undertype"],
+            skadetype=felter["skadetype"],
+            status=(
+                detaljeret_status
+                or status
             ),
-            antal_ikke_standard_case=(
-                antal_ikke_standard_case
-            ),
-            antal_ugyldige=antal_ugyldige,
+            standard_case=standard_case,
         )
 
-    finally:
-        await api_client.close()
+        workqueue.add_item(
+            data=data_json,
+            reference=item_reference,
+        )
+
+        antal_tilfoejet += 1
+
+        logger.info(
+            "SEND EASY-item tilføjet. "
+            "Skade-id: %s. Skadenummer: %s. "
+            "Reference: %s. Status: %s.",
+            skade_id,
+            felter["skade_nr"],
+            item_reference,
+            detaljeret_status or status,
+        )
+
+        print(
+            "Tilføjet til SEND EASY-kø: "
+            f"Skade-id {skade_id!r}, "
+            f"skadenummer {felter['skade_nr']!r}, "
+            f"status {(detaljeret_status or status)!r}."
+        )
+
+    _udskriv_opsummering(
+        antal_hentet=len(skader),
+        antal_tilfoejet=antal_tilfoejet,
+        antal_dubletter=antal_dubletter,
+        antal_filtreret=antal_filtreret,
+        antal_ekskluderet_status=(
+            antal_ekskluderet_status
+        ),
+        antal_ikke_standard_case=(
+            antal_ikke_standard_case
+        ),
+        antal_ugyldige=antal_ugyldige,
+    )
 
 
 # ------------------------------------------------------------
@@ -342,19 +332,6 @@ async def populate_queue(
 # ------------------------------------------------------------
 
 
-def _hent_queue_headless() -> bool:
-    """Validerer og returnerer queue-modes headless-indstilling."""
-    if not isinstance(
-        QUEUE_HEADLESS,
-        bool,
-    ):
-        raise TypeError(
-            "QUEUE_HEADLESS i config.py skal være "
-            "True eller False. "
-            f"Modtog: {QUEUE_HEADLESS!r}."
-        )
-
-    return QUEUE_HEADLESS
 
 
 # ------------------------------------------------------------
@@ -512,13 +489,13 @@ def _valider_ekskluderede_statusser() -> None:
         tuple,
     ):
         raise TypeError(
-            "EKSKLUDEREDE_STATUSSER i config.py "
+            "EKSKLUDEREDE_STATUSSER i configuration.py "
             "skal være en tuple."
         )
 
     if not EKSKLUDEREDE_STATUSSER:
         raise ValueError(
-            "EKSKLUDEREDE_STATUSSER i config.py "
+            "EKSKLUDEREDE_STATUSSER i configuration.py "
             "må ikke være tom."
         )
 
@@ -649,7 +626,7 @@ def _hent_standard_case(
 
 
 def _hent_queue_id() -> int:
-    """Validerer og returnerer queue-id fra config.py."""
+    """Validerer og returnerer queue-id fra configuration.py."""
     try:
         return normalize_positive_id(
             name="QUEUE_ID",
@@ -661,7 +638,7 @@ def _hent_queue_id() -> int:
         ValueError,
     ) as error:
         raise RuntimeError(
-            "QUEUE_ID i config.py skal være "
+            "QUEUE_ID i configuration.py skal være "
             "et positivt heltal. "
             f"Modtog: {QUEUE_ID!r}."
         ) from error

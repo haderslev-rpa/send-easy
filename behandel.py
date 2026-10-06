@@ -15,8 +15,8 @@ Forløb
    - registrér state "1.0 Sendt til EASY"
    - returnér til main.py, som afslutter itemet som Completed
 
-q-insubiz opretter selv en autentificeret browsersession for at hente
-cookies. Selve skadeopslaget og EASY-afsendelsen udføres gennem API'et.
+BrowserSession, Page og InsubizApiClient oprettes og ejes af main.py.
+behandel.py bruger den delte API-klient og lukker den ikke.
 """
 
 import logging
@@ -24,11 +24,10 @@ from typing import Any
 
 from automation_server_client import WorkItemError
 
-from config import get_headless
 from q_haderslev_vbo.automation_server.ats_update_item_data import (
     update_item_data,
 )
-from q_insubiz.api_client import create_api_client
+from q_insubiz.api.client import InsubizApiClient
 from q_insubiz.functionality.skader import (
     hent_skade_via_id,
     send_skade_til_easy,
@@ -92,17 +91,22 @@ SKADE_NR_FELTER = (
 
 
 async def behandel_page(
+    *,
     item: Any,
-    session: Any = None,
-    page: Any = None,
+    session: Any,
+    page: Any,
+    api_client: InsubizApiClient,
 ) -> None:
-    """Behandler ét SEND EASY-work item.
+    """Behandler ét SEND EASY-work item med main.py's delte Insubiz-klient.
 
-    session og page accepteres for kompatibilitet med main.py, men bruges
-    ikke til skadeopslag eller EASY-afsendelse. q-insubiz håndterer selv
-    login, browserkontekst og cookies gennem create_api_client().
+    BrowserSession, Page og InsubizApiClient ejes og lukkes af main.py.
+    session og page modtages efter processkabelonens kaldemønster, mens
+    skadeopslag og EASY-afsendelse udføres gennem api_client.
     """
     del session, page
+
+    if api_client is None:
+        raise WorkItemError("Insubiz API-klienten mangler.")
 
     data = item.data
 
@@ -139,10 +143,6 @@ async def behandel_page(
     print("=" * 80)
     print(f"Skade-id: {skade_id}")
     print(f"Skade-nr.: {skade_nr}")
-
-    api_client = create_api_client(
-        headless=get_headless(),
-    )
 
     try:
         skade = await hent_skade_via_id(
@@ -238,8 +238,6 @@ async def behandel_page(
             f"Fejl: {type(error).__name__}: {error}"
         ) from error
 
-    finally:
-        await api_client.close()
 
 
 # ------------------------------------------------------------
