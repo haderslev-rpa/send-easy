@@ -5,10 +5,9 @@ from __future__ import annotations
 En skade tilføjes kun, når alle betingelser er opfyldt:
 
 - Skadenummer er større end MINIMUM_SKADENUMMER.
-- Status er ikke en af statusserne i EKSKLUDEREDE_STATUSSER.
+- Status er Ny.
 - Undertype er Arbejdsulykke.
 - Skadetype er Arbejdsskade.
-- Skadens detailopslag har standardCase = True.
 - Skade-id findes ikke allerede i den konfigurerede ATS-kø.
 
 Work item-reference er skadens tekniske skade-id.
@@ -26,7 +25,6 @@ from configuration import (
     BOX_SKADE_ID,
     BOX_SKADE_NR,
     BOX_SKATYPE,
-    BOX_STANDARD_CASE,
     BOX_STATUS,
     BOX_UNDERTYPE,
     CLAIM_GROUP_ID,
@@ -35,8 +33,8 @@ from configuration import (
     CUSTOMER_ID,
     CUSTOMER_SEGMENTATION_1,
     CUSTOMER_SEGMENTATION_2,
-    EKSKLUDEREDE_STATUSSER,
     FORVENTET_SKATYPE,
+    FORVENTET_STATUS,
     FORVENTET_UNDERTYPE,
     INCIDENT_YEAR_FROM,
     INCIDENT_YEAR_TO,
@@ -52,7 +50,6 @@ from configuration import (
     SKADE_NR_FELTER,
     SKADER_LISTE_COLUMNS,
     SKADETYPE_FELTER,
-    STANDARD_CASE_FELTER,
     STATUS_FELTER,
     STATUS_ID,
     UNDERTYPE_FELTER,
@@ -66,7 +63,6 @@ from q_haderslev_vbo.automation_server.ats_update_item_data import (
 from q_insubiz.api.client import InsubizApiClient
 from q_insubiz.functionality.skader import (
     SKADER_LISTE,
-    hent_skade_via_id,
 )
 from q_insubiz.utils import normalize_positive_id
 
@@ -95,42 +91,31 @@ async def populate_queue(
         raise ValueError(
             "workqueue må ikke være None."
         )
-
     if api_client is None:
         raise ValueError(
             "Insubiz API-klienten mangler."
         )
-
     if not isinstance(debug, bool):
         raise TypeError(
             "debug skal være True eller False."
         )
-
     queue_id = _hent_queue_id()
-    _valider_ekskluderede_statusser()
-
     logger.info(
         "SEND EASY queue-mode startet med delt API-klient. "
-        "Queue-id: %s. Debug: %s. "
-        "Ekskluderede statusser: %s.",
+        "Queue-id: %s. Debug: %s. Forventet status: %s.",
         queue_id,
         debug,
-        EKSKLUDEREDE_STATUSSER,
+        FORVENTET_STATUS,
     )
-
     skader = await _hent_skadeliste(
         api_client=api_client,
     )
-
     antal_tilfoejet = 0
     antal_dubletter = 0
     antal_filtreret = 0
-    antal_ekskluderet_status = 0
-    antal_ikke_standard_case = 0
+    antal_forkert_status = 0
     antal_ugyldige = 0
-
     queue_lookup_end = _utc_timestamp()
-
     for row_number, skade in enumerate(
         skader,
         start=1,
@@ -146,7 +131,6 @@ async def populate_queue(
             ValueError,
         ) as error:
             antal_ugyldige += 1
-
             logger.warning(
                 "Skaderækken kunne ikke valideres. "
                 "Række: %s. Fejl: %s",
@@ -154,17 +138,14 @@ async def populate_queue(
                 error,
             )
             continue
-
         status = felter["status"]
-
-        if _er_ekskluderet_status(
-            status=status,
+        if not _tekster_er_ens(
+            status,
+            FORVENTET_STATUS,
         ):
-            antal_ekskluderet_status += 1
-
+            antal_forkert_status += 1
             logger.info(
-                "Skaden tilføjes ikke, fordi status "
-                "er ekskluderet. "
+                "Skaden tilføjes ikke, fordi status ikke er Ny. "
                 "Række: %s. Skade-id: %s. "
                 "Skadenummer: %s. Status: %r.",
                 row_number,
@@ -173,7 +154,6 @@ async def populate_queue(
                 status,
             )
             continue
-
         if not _skal_tilfoejes_fra_liste(
             skade_nr=felter["skade_nr"],
             status=status,
@@ -181,7 +161,6 @@ async def populate_queue(
             skadetype=felter["skadetype"],
         ):
             antal_filtreret += 1
-
             logger.info(
                 "Skaden opfylder ikke SEND EASY-listens "
                 "øvrige filtre. "
@@ -196,17 +175,14 @@ async def populate_queue(
                 status,
             )
             continue
-
         skade_id = felter["skade_id"]
         item_reference = str(skade_id)
-
         if _findes_i_koe(
             queue_id=queue_id,
             item_reference=item_reference,
             queue_lookup_end=queue_lookup_end,
         ):
             antal_dubletter += 1
-
             logger.info(
                 "Springer eksisterende SEND EASY-item over. "
                 "Skade-id: %s. Skadenummer: %s.",
@@ -214,87 +190,18 @@ async def populate_queue(
                 felter["skade_nr"],
             )
             continue
-
-        try:
-            skade_detaljer = await hent_skade_via_id(
-                api_client=api_client,
-                skade_id=skade_id,
-            )
-
-            standard_case = _hent_standard_case(
-                skade=skade_detaljer,
-            )
-
-            detaljeret_status = (
-                _hent_valgfri_status_fra_detaljer(
-                    skade=skade_detaljer,
-                )
-            )
-
-        except Exception as error:
-            antal_ugyldige += 1
-
-            logger.warning(
-                "Skadens detaildata kunne ikke valideres. "
-                "Skade-id: %s. Fejl: %s",
-                skade_id,
-                error,
-            )
-            continue
-
-        if (
-            detaljeret_status
-            and _er_ekskluderet_status(
-                status=detaljeret_status,
-            )
-        ):
-            antal_ekskluderet_status += 1
-
-            logger.info(
-                "Skaden tilføjes ikke, fordi status i "
-                "detailopslaget er ekskluderet. "
-                "Skade-id: %s. Skadenummer: %s. "
-                "Listestatus: %r. Detailstatus: %r.",
-                skade_id,
-                felter["skade_nr"],
-                status,
-                detaljeret_status,
-            )
-            continue
-
-        if standard_case is not True:
-            antal_ikke_standard_case += 1
-
-            logger.info(
-                "Skaden tilføjes ikke, fordi standardCase "
-                "ikke er True. "
-                "Skade-id: %s. Skadenummer: %s. "
-                "standardCase: %r.",
-                skade_id,
-                felter["skade_nr"],
-                standard_case,
-            )
-            continue
-
         data_json = _opret_work_item_data(
             skade_id=skade_id,
             skade_nr=felter["skade_nr"],
             undertype=felter["undertype"],
             skadetype=felter["skadetype"],
-            status=(
-                detaljeret_status
-                or status
-            ),
-            standard_case=standard_case,
+            status=status,
         )
-
         workqueue.add_item(
             data=data_json,
             reference=item_reference,
         )
-
         antal_tilfoejet += 1
-
         logger.info(
             "SEND EASY-item tilføjet. "
             "Skade-id: %s. Skadenummer: %s. "
@@ -302,30 +209,22 @@ async def populate_queue(
             skade_id,
             felter["skade_nr"],
             item_reference,
-            detaljeret_status or status,
+            status,
         )
-
         print(
             "Tilføjet til SEND EASY-kø: "
             f"Skade-id {skade_id!r}, "
             f"skadenummer {felter['skade_nr']!r}, "
-            f"status {(detaljeret_status or status)!r}."
+            f"status {status!r}."
         )
-
     _udskriv_opsummering(
         antal_hentet=len(skader),
         antal_tilfoejet=antal_tilfoejet,
         antal_dubletter=antal_dubletter,
         antal_filtreret=antal_filtreret,
-        antal_ekskluderet_status=(
-            antal_ekskluderet_status
-        ),
-        antal_ikke_standard_case=(
-            antal_ikke_standard_case
-        ),
+        antal_forkert_status=antal_forkert_status,
         antal_ugyldige=antal_ugyldige,
     )
-
 
 # ------------------------------------------------------------
 # QUEUE-BROWSERKONFIGURATION
@@ -429,130 +328,9 @@ def _hent_skadefelter(
     }
 
 
-def _hent_valgfri_status_fra_detaljer(
-    *,
-    skade: dict[str, Any],
-) -> str:
-    """Henter status fra skadeopslaget, hvis status kan findes."""
-    if not isinstance(skade, dict):
-        raise TypeError(
-            "Skadedetaljerne skal være en dictionary. "
-            f"Modtog: {type(skade).__name__}."
-        )
-
-    direkte_status = skade.get(
-        "status.text"
-    )
-
-    if direkte_status is not None:
-        return _normaliser_tekstvaerdi(
-            value=direkte_status,
-        )
-
-    for field_name in (
-        "status",
-        "incidentStatus",
-        "IncidentStatus",
-    ):
-        value = skade.get(field_name)
-
-        if value is None:
-            continue
-
-        if isinstance(value, dict):
-            value = (
-                value.get("text")
-                or value.get("name")
-                or value.get("value")
-                or value.get("description")
-            )
-
-        normalized_value = _normaliser_tekstvaerdi(
-            value=value,
-        )
-
-        if normalized_value:
-            return normalized_value
-
-    return ""
-
-
 # ------------------------------------------------------------
 # FILTRERING
 # ------------------------------------------------------------
-
-
-def _valider_ekskluderede_statusser() -> None:
-    """Validerer statusserne, der ikke må tilføjes til køen."""
-    if not isinstance(
-        EKSKLUDEREDE_STATUSSER,
-        tuple,
-    ):
-        raise TypeError(
-            "EKSKLUDEREDE_STATUSSER i configuration.py "
-            "skal være en tuple."
-        )
-
-    if not EKSKLUDEREDE_STATUSSER:
-        raise ValueError(
-            "EKSKLUDEREDE_STATUSSER i configuration.py "
-            "må ikke være tom."
-        )
-
-    normaliserede_statusser: set[str] = set()
-
-    for index, status in enumerate(
-        EKSKLUDEREDE_STATUSSER,
-        start=1,
-    ):
-        if not isinstance(status, str):
-            raise TypeError(
-                "Alle værdier i EKSKLUDEREDE_STATUSSER "
-                "skal være tekst. "
-                f"Position: {index}. "
-                f"Modtog: {type(status).__name__}."
-            )
-
-        normalized_status = _normaliser_tekst(
-            status
-        )
-
-        if not normalized_status:
-            raise ValueError(
-                "EKSKLUDEREDE_STATUSSER må ikke "
-                "indeholde tomme værdier. "
-                f"Position: {index}."
-            )
-
-        if normalized_status in normaliserede_statusser:
-            raise ValueError(
-                "EKSKLUDEREDE_STATUSSER indeholder "
-                "den samme status flere gange. "
-                f"Status: {status!r}."
-            )
-
-        normaliserede_statusser.add(
-            normalized_status
-        )
-
-
-def _er_ekskluderet_status(
-    *,
-    status: Any,
-) -> bool:
-    """Returnerer True for Afsluttet og Genoptaget."""
-    normalized_status = _normaliser_tekst(
-        status
-    )
-
-    return any(
-        normalized_status
-        == _normaliser_tekst(
-            excluded_status
-        )
-        for excluded_status
-        in EKSKLUDEREDE_STATUSSER
-    )
 
 
 def _skal_tilfoejes_fra_liste(
@@ -572,8 +350,9 @@ def _skal_tilfoejes_fra_liste(
     if numerisk_skade_nr <= MINIMUM_SKADENUMMER:
         return False
 
-    if _er_ekskluderet_status(
-        status=status,
+    if not _tekster_er_ens(
+        status,
+        FORVENTET_STATUS,
     ):
         return False
 
@@ -586,38 +365,8 @@ def _skal_tilfoejes_fra_liste(
     return _tekster_er_ens(
         skadetype,
         FORVENTET_SKATYPE,
+    FORVENTET_STATUS,
     )
-
-
-def _hent_standard_case(
-    *,
-    skade: dict[str, Any],
-) -> bool:
-    """Henter standardCase fra skadeopslaget."""
-    if not isinstance(skade, dict):
-        raise TypeError(
-            "hent_skade_via_id returnerede ikke "
-            "en dictionary. "
-            f"Modtog: {type(skade).__name__}."
-        )
-
-    value = _hent_feltvaerdi(
-        skade=skade,
-        feltnavne=STANDARD_CASE_FELTER,
-        felttype="standardCase",
-    )
-
-    normalized_value = _normaliser_bool(
-        value=value,
-    )
-
-    if normalized_value is None:
-        raise RuntimeError(
-            "standardCase havde en ugyldig værdi. "
-            f"Modtog: {value!r}."
-        )
-
-    return normalized_value
 
 
 # ------------------------------------------------------------
@@ -673,7 +422,6 @@ def _opret_work_item_data(
     undertype: str,
     skadetype: str,
     status: str,
-    standard_case: bool,
 ) -> dict[str, Any]:
     """Opretter work item-data med domænefelterne i box."""
     data_json: dict[str, Any] = {}
@@ -686,7 +434,6 @@ def _opret_work_item_data(
             BOX_UNDERTYPE: undertype,
             BOX_SKATYPE: skadetype,
             BOX_STATUS: status,
-            BOX_STANDARD_CASE: standard_case,
         },
         update=False,
     )
@@ -908,50 +655,6 @@ def _tekster_er_ens(
     )
 
 
-def _normaliser_bool(
-    *,
-    value: Any,
-) -> bool | None:
-    """Normaliserer kendte bool-formater fra Insubiz."""
-    if isinstance(value, bool):
-        return value
-
-    if (
-        isinstance(value, int)
-        and not isinstance(value, bool)
-    ):
-        if value in {
-            0,
-            1,
-        }:
-            return bool(value)
-
-        return None
-
-    if isinstance(value, str):
-        normalized_value = (
-            value.strip().casefold()
-        )
-
-        if normalized_value in {
-            "true",
-            "1",
-            "ja",
-            "yes",
-        }:
-            return True
-
-        if normalized_value in {
-            "false",
-            "0",
-            "nej",
-            "no",
-        }:
-            return False
-
-    return None
-
-
 def _normaliser_skadenummer_til_heltal(
     *,
     value: Any,
@@ -1017,8 +720,7 @@ def _udskriv_opsummering(
     antal_tilfoejet: int,
     antal_dubletter: int,
     antal_filtreret: int,
-    antal_ekskluderet_status: int,
-    antal_ikke_standard_case: int,
+    antal_forkert_status: int,
     antal_ugyldige: int,
 ) -> None:
     """Udskriver queue-kørslens resultat."""
@@ -1026,14 +728,13 @@ def _udskriv_opsummering(
         "SEND EASY-køoprettelse afsluttet. "
         "Hentet: %s. Tilføjet: %s. "
         "Dubletter: %s. Filtreret: %s. "
-        "Ekskluderet pga. status: %s. "
-        "Ikke standardCase: %s. Ugyldige: %s.",
+        "Fravalgt pga. anden status end Ny: %s. "
+        "Ugyldige: %s.",
         antal_hentet,
         antal_tilfoejet,
         antal_dubletter,
         antal_filtreret,
-        antal_ekskluderet_status,
-        antal_ikke_standard_case,
+        antal_forkert_status,
         antal_ugyldige,
     )
 
@@ -1054,13 +755,8 @@ def _udskriv_opsummering(
         f"Antal filtreret fra: {antal_filtreret}"
     )
     print(
-        "Antal fravalgt pga. status "
-        "Afsluttet eller Genoptaget: "
-        f"{antal_ekskluderet_status}"
-    )
-    print(
-        "Antal fravalgt pga. standardCase: "
-        f"{antal_ikke_standard_case}"
+        "Antal fravalgt pga. anden status end Ny: "
+        f"{antal_forkert_status}"
     )
     print(
         f"Antal ugyldige rækker: {antal_ugyldige}"

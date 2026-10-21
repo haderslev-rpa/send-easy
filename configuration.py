@@ -64,7 +64,6 @@ SKADER_LISTE_COLUMNS: list[str] = [
     "IncidentSubType",
     "IncidentStatus",
     "Created",
-    "standardCase",
 ]
 
 
@@ -76,10 +75,7 @@ SKADER_LISTE_COLUMNS: list[str] = [
 # Hvis alle positive skadenumre skal accepteres, behold værdien 0.
 MINIMUM_SKADENUMMER: int = 0
 
-EKSKLUDEREDE_STATUSSER: tuple[str, ...] = (
-    "Afsluttet",
-    "Genoptaget",
-)
+FORVENTET_STATUS: str = "Ny"
 
 FORVENTET_UNDERTYPE: str = "Arbejdsulykke"
 FORVENTET_SKATYPE: str = "Arbejdsskade"
@@ -124,11 +120,6 @@ STATUS_FELTER: tuple[str, ...] = (
     "status",
 )
 
-STANDARD_CASE_FELTER: tuple[str, ...] = (
-    "standardCase",
-    "StandardCase",
-    "standard_case",
-)
 
 
 # ------------------------------------------------------------
@@ -140,7 +131,6 @@ BOX_SKADE_NR: str = "skade_nr"
 BOX_UNDERTYPE: str = "undertype"
 BOX_SKATYPE: str = "skadetype"
 BOX_STATUS: str = "status"
-BOX_STANDARD_CASE: str = "standard_case"
 
 
 # ------------------------------------------------------------
@@ -171,11 +161,9 @@ def get_headless(debug: bool = False) -> bool:
 # ------------------------------------------------------------
 
 __all__ = [
-    "EKSKLUDEREDE_STATUSSER",
     "BOX_SKADE_ID",
     "BOX_SKADE_NR",
     "BOX_SKATYPE",
-    "BOX_STANDARD_CASE",
     "BOX_STATUS",
     "BOX_UNDERTYPE",
     "CLAIM_GROUP_ID",
@@ -185,6 +173,7 @@ __all__ = [
     "CUSTOMER_SEGMENTATION_1",
     "CUSTOMER_SEGMENTATION_2",
     "FORVENTET_SKATYPE",
+    "FORVENTET_STATUS",
     "FORVENTET_UNDERTYPE",
     "HEADLESS",
     "INCIDENT_YEAR_FROM",
@@ -202,7 +191,6 @@ __all__ = [
     "SKADE_NR_FELTER",
     "SKADER_LISTE_COLUMNS",
     "SKADETYPE_FELTER",
-    "STANDARD_CASE_FELTER",
     "STATUS_FELTER",
     "STATUS_ID",
     "UNDERTYPE_FELTER",
