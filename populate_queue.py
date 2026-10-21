@@ -365,9 +365,7 @@ def _skal_tilfoejes_fra_liste(
     return _tekster_er_ens(
         skadetype,
         FORVENTET_SKATYPE,
-    FORVENTET_STATUS,
     )
-
 
 # ------------------------------------------------------------
 # AUTOMATION SERVER
