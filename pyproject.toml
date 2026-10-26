@@ -9,7 +9,7 @@ dependencies = [
     "automation-server-client",
     "q-haderslev-vbo",
     "q-insubiz",
-    "playwright>=1.59.0",
+    "playwright==1.60.0",
 ]
 
 
