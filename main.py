@@ -16,32 +16,98 @@ Konfiguration læses fortsat fra projektets eksisterende configuration.py.
 
 from __future__ import annotations
 
-import asyncio
-import logging
-import sys
-from typing import Any
+import os
 
-from automation_server_client import (
+import configuration
+
+
+# ------------------------------------------------------------
+# PLAYWRIGHT-MILJØ
+# ------------------------------------------------------------
+
+_playwright_skip_browser_gc = configuration.PLAYWRIGHT_SKIP_BROWSER_GC
+
+if not isinstance(_playwright_skip_browser_gc, bool):
+    raise TypeError(
+        "configuration.PLAYWRIGHT_SKIP_BROWSER_GC skal være True eller False."
+    )
+
+os.environ["PLAYWRIGHT_SKIP_BROWSER_GC"] = (
+    "1" if _playwright_skip_browser_gc else "0"
+)
+
+
+# ------------------------------------------------------------
+# STANDARDIMPORTS
+# ------------------------------------------------------------
+
+import asyncio  # noqa: E402
+import logging  # noqa: E402
+import sys  # noqa: E402
+from typing import Any  # noqa: E402
+
+
+# ------------------------------------------------------------
+# AUTOMATION SERVER
+# ------------------------------------------------------------
+
+from automation_server_client import (  # noqa: E402
     AutomationServer,
     WorkItemError,
     WorkItemStatus,
     Workqueue,
 )
-from playwright.async_api import Page
 
-from behandel import behandel_page
-from configuration import QUEUE_HEADLESS, QUEUE_ID, get_headless
-from populate_queue import populate_queue
 
-from q_haderslev_vbo.automation_server.ats_update_item_data import (
+# ------------------------------------------------------------
+# PLAYWRIGHT
+# Disse imports skal stå efter PLAYWRIGHT_SKIP_BROWSER_GC.
+# ------------------------------------------------------------
+
+from playwright.async_api import Page  # noqa: E402
+from q_haderslev_vbo.playwright.browser_session import (  # noqa: E402
+    BrowserSession,
+)
+
+
+# ------------------------------------------------------------
+# PROCESMODULER
+# ------------------------------------------------------------
+
+from behandel import behandel_page  # noqa: E402
+from populate_queue import populate_queue  # noqa: E402
+
+
+# ------------------------------------------------------------
+# KONFIGURATION
+# ------------------------------------------------------------
+
+from configuration import (  # noqa: E402
+    QUEUE_HEADLESS,
+    QUEUE_ID,
+    USE_REGULAR_CHROMIUM,
+    get_headless,
+)
+
+
+# ------------------------------------------------------------
+# Q-HADERSLEV-VBO
+# ------------------------------------------------------------
+
+from q_haderslev_vbo.automation_server.ats_update_item_data import (  # noqa: E402
     update_item_data,
 )
-from q_haderslev_vbo.playwright.browser_session import BrowserSession
 
-from q_insubiz.api.client import InsubizApiClient
-from q_insubiz.api_client import create_api_client_from_context
-from q_insubiz.functionality.launch import launch_insubiz
 
+# ------------------------------------------------------------
+# Q-INSUBIZ
+# ------------------------------------------------------------
+
+from q_insubiz.api.client import InsubizApiClient  # noqa: E402
+from q_insubiz.api_client import (  # noqa: E402
+    create_api_client_from_context,
+)
+from q_insubiz.functionality.launch import launch_insubiz  # noqa: E402
 
 # ------------------------------------------------------------
 # LOGGING
@@ -295,6 +361,7 @@ async def _opret_browser_session(
     session = BrowserSession(
         headless=headless,
         debug=debug,
+        use_regular_chromium=USE_REGULAR_CHROMIUM,
     )
 
     try:

@@ -39,6 +39,11 @@ HEADLESS: bool = True
 # Queue-mode kører på ATS uden X-server og skal derfor være headless.
 QUEUE_HEADLESS: bool = True
 
+# configuration.py
+
+USE_REGULAR_CHROMIUM: bool = True
+PLAYWRIGHT_SKIP_BROWSER_GC: bool = True
+
 CUSTOMER_ID: int | None = None
 CUSTOMER_SEGMENTATION_1: int = -1
 CUSTOMER_SEGMENTATION_2: int = -1
